@@ -128,6 +128,8 @@ export default function ProductDetailsPage() {
     getProductFeedback,
     recordProductView,
     isProductOwner,
+    toggleProductUpvote,
+    hasUserUpvotedProduct,
     replyToFeedback,
     toggleFeedbackHelpful,
     getProfile,
@@ -144,6 +146,16 @@ export default function ProductDetailsPage() {
     (product?.creatorEmail ? product.creatorEmail.split('@')[0] : 'Independent Creator')
   const isEnrolled = user && product ? isEnrolledInProduct(product.id, user.email) : false
   const isOwner = user && product ? isProductOwner(product.id, user.email) : false
+
+  // Leaderboard ranking & upvote state
+  const leaderboardRank = useMemo(() => {
+    if (!product) return null
+    const sorted = [...products].sort((a, b) => (b.leaderboardScore ?? 0) - (a.leaderboardScore ?? 0))
+    const idx = sorted.findIndex((p) => p.id === product.id)
+    return idx !== -1 ? idx + 1 : null
+  }, [products, product])
+
+  const isUpvoted = user && product ? hasUserUpvotedProduct(product.id, user.email) : false
 
   // IndexedDB media integration
   const { url: coverDbUrl } = useIndexedDbMedia(product?.mediaId, product?.image || '')
@@ -509,7 +521,7 @@ export default function ProductDetailsPage() {
                     {category}
                   </span>
                 ))}
-                <span className="rounded-full border border-[var(--border-main)] bg-[var(--bg-surface-subtle)] px-2.5 py-0.5 text-xs font-semibold text-[var(--text-muted)]">
+                <span className="rounded-full border border-[var(--border-main)] bg-[var(--bg-surface)] px-2.5 py-0.5 text-xs font-semibold text-[var(--text-muted)]">
                   {product.stage}
                 </span>
                 {product.enrollmentPaused ? (
@@ -522,9 +534,18 @@ export default function ProductDetailsPage() {
                   </span>
                 )}
                 {(product.isSample || product.isLocalDemo) && (
-                  <span className="rounded-full border border-[#d96b43]/30 bg-[#d96b43]/10 px-2.5 py-0.5 text-xs font-semibold text-[#b85028] dark:text-[#eb8b72]">
+                  <span className="rounded-full border border-[var(--border-main)] bg-[var(--bg-surface)] px-2.5 py-0.5 text-xs font-semibold text-[var(--text-muted)]">
                     {product.isSample ? 'Featured' : 'Community'}
                   </span>
+                )}
+                {leaderboardRank && (
+                  <Link
+                    to="/#spotlight-section"
+                    title="View Community Leaderboard"
+                    className="inline-flex items-center gap-1.5 rounded-full border border-[var(--border-main)] bg-[var(--bg-surface)] px-2.5 py-0.5 text-xs font-semibold text-[var(--text-muted)] hover:border-[#d96b43] hover:text-[var(--text-main)] transition-colors"
+                  >
+                    <span>Leaderboard #{leaderboardRank}</span>
+                  </Link>
                 )}
               </div>
 
@@ -535,6 +556,44 @@ export default function ProductDetailsPage() {
               <p className="mt-3 text-base sm:text-lg leading-relaxed text-[var(--text-muted)] break-words">
                 {product.tagline}
               </p>
+
+              {/* Engagement & Upvote Bar */}
+              <div className="mt-5 flex flex-wrap items-center gap-3">
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (!user) {
+                      navigate('/sign-in', { state: { from: location } })
+                      return
+                    }
+                    toggleProductUpvote(product.id, user.email)
+                  }}
+                  className={`inline-flex items-center gap-2 rounded-2xl border px-5 py-2.5 text-sm font-bold transition-all duration-200 cursor-pointer shadow-warm-xs ${
+                    isUpvoted
+                      ? 'border-[#d96b43] bg-[#d96b43] text-white shadow-warm-sm'
+                      : 'border-[var(--border-main)] bg-[var(--bg-surface)] text-[var(--text-main)] hover:border-[#d96b43] hover:text-[#d96b43]'
+                  }`}
+                  aria-label={`Upvote ${product.name}, current votes: ${product.upvoteCount || 0}`}
+                >
+                  <svg className="h-4 w-4" fill={isUpvoted ? 'currentColor' : 'none'} viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M5 15l7-7 7 7" />
+                  </svg>
+                  <span>{isUpvoted ? 'Upvoted' : 'Upvote Product'}</span>
+                  <span className={`rounded-full px-2 py-0.5 text-xs font-bold ${
+                    isUpvoted ? 'bg-white/25 text-white' : 'bg-[var(--bg-surface-subtle)] text-[var(--text-main)]'
+                  }`}>
+                    {product.upvoteCount || 0}
+                  </span>
+                </button>
+
+                <div className="inline-flex items-center gap-1.5 rounded-2xl border border-[var(--border-main)] bg-[var(--bg-surface)] px-4 py-2.5 text-xs sm:text-sm font-semibold text-[var(--text-muted)]">
+                  <svg className="h-4 w-4 text-[var(--text-subtle)]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                    <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+                    <circle cx="12" cy="12" r="3" />
+                  </svg>
+                  <span><strong className="text-[var(--text-main)]">{product.views || 0}</strong> views</span>
+                </div>
+              </div>
 
               {/* Timestamp & Metadata */}
               <div className="mt-3 flex flex-wrap items-center gap-3 text-xs text-[var(--text-subtle)]">
@@ -762,6 +821,28 @@ export default function ProductDetailsPage() {
                       Gate Active
                     </span>
                   )}
+                </div>
+
+                {/* Leaderboard & Metric Summary */}
+                <div className="mt-4 grid grid-cols-3 gap-2.5 text-center">
+                  <div className="rounded-2xl border border-[var(--border-main)] bg-[var(--bg-surface-subtle)] p-2.5">
+                    <span className="block text-[11px] font-medium uppercase tracking-wider text-[var(--text-subtle)]">Leaderboard</span>
+                    <strong className="mt-0.5 block text-sm sm:text-base font-extrabold text-[var(--text-main)]">
+                      {leaderboardRank ? `#${leaderboardRank}` : '—'}
+                    </strong>
+                  </div>
+                  <div className="rounded-2xl border border-[var(--border-main)] bg-[var(--bg-surface-subtle)] p-2.5">
+                    <span className="block text-[11px] font-medium uppercase tracking-wider text-[var(--text-subtle)]">Upvotes</span>
+                    <strong className="mt-0.5 block text-sm sm:text-base font-extrabold text-[#d96b43]">
+                      {product.upvoteCount || 0}
+                    </strong>
+                  </div>
+                  <div className="rounded-2xl border border-[var(--border-main)] bg-[var(--bg-surface-subtle)] p-2.5">
+                    <span className="block text-[11px] font-medium uppercase tracking-wider text-[var(--text-subtle)]">Views</span>
+                    <strong className="mt-0.5 block text-sm sm:text-base font-extrabold text-[var(--text-main)]">
+                      {product.views || 0}
+                    </strong>
+                  </div>
                 </div>
 
                 {/* Maker's Prompt */}

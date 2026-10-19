@@ -20,6 +20,23 @@ const VIEWS_STORAGE_KEY = 'buildboard_demo_views'
 const PROFILES_STORAGE_KEY = 'buildboard_demo_profiles'
 const REMINDER_DISMISSALS_STORAGE_KEY = 'buildboard_demo_reminder_dismissals'
 const PROBLEMS_STORAGE_KEY = 'buildboard_demo_problems'
+const UPVOTES_STORAGE_KEY = 'buildboard_demo_product_upvotes'
+
+const DEFAULT_SEED_VIEWS = {
+  'prompt-bench': 412,
+  'weeknote': 328,
+  'token-sync': 245,
+  'query-lens': 184,
+  'focus-orbit': 130,
+}
+
+const DEFAULT_SEED_UPVOTES = {
+  'prompt-bench': Array.from({ length: 48 }, (_, i) => `tester${i + 1}@buildboard.dev`),
+  'weeknote': Array.from({ length: 36 }, (_, i) => `tester${i + 1}@buildboard.dev`),
+  'token-sync': Array.from({ length: 29 }, (_, i) => `tester${i + 1}@buildboard.dev`),
+  'query-lens': Array.from({ length: 21 }, (_, i) => `tester${i + 1}@buildboard.dev`),
+  'focus-orbit': Array.from({ length: 15 }, (_, i) => `tester${i + 1}@buildboard.dev`),
+}
 
 function slugify(text) {
   return text
@@ -74,6 +91,16 @@ export const DemoDataProvider = ({ children }) => {
     }
   })
 
+  // Product upvotes mapping: key is productId, value is array of user emails who upvoted
+  const [productUpvotes, setProductUpvotes] = useState(() => {
+    try {
+      const saved = localStorage.getItem(UPVOTES_STORAGE_KEY)
+      return saved ? JSON.parse(saved) : DEFAULT_SEED_UPVOTES
+    } catch {
+      return DEFAULT_SEED_UPVOTES
+    }
+  })
+
 
   // Synchronize custom products to localStorage
   useEffect(() => {
@@ -110,6 +137,15 @@ export const DemoDataProvider = ({ children }) => {
       console.error('Failed to sync demo views to localStorage', e)
     }
   }, [views])
+
+  // Synchronize product upvotes to localStorage
+  useEffect(() => {
+    try {
+      localStorage.setItem(UPVOTES_STORAGE_KEY, JSON.stringify(productUpvotes))
+    } catch (e) {
+      console.error('Failed to sync demo product upvotes to localStorage', e)
+    }
+  }, [productUpvotes])
 
 
   // Profiles mapping: key is normalized email, value is profile object
@@ -157,15 +193,24 @@ export const DemoDataProvider = ({ children }) => {
     const all = [...customProducts, ...remainingSeed]
     return all.map((p) => {
       const email = (p.creatorEmail || '').toLowerCase().trim()
-      if (email && profiles[email]?.displayName?.trim()) {
-        return {
-          ...p,
-          maker: profiles[email].displayName.trim(),
-        }
+      const maker = (email && profiles[email]?.displayName?.trim()) ? profiles[email].displayName.trim() : p.maker
+
+      const productViews = views[p.id] ?? DEFAULT_SEED_VIEWS[p.id] ?? 0
+      const productUpvoteList = productUpvotes[p.id] || DEFAULT_SEED_UPVOTES[p.id] || []
+      const upvoteCount = productUpvoteList.length
+      // Combined Leaderboard score: 10 points per upvote + 1 point per view
+      const leaderboardScore = (upvoteCount * 10) + productViews
+
+      return {
+        ...p,
+        maker,
+        views: productViews,
+        upvotes: productUpvoteList,
+        upvoteCount,
+        leaderboardScore,
       }
-      return p
     })
-  }, [customProducts, profiles])
+  }, [customProducts, profiles, views, productUpvotes])
 
   const addProduct = (formData) => {
     const baseSlug = slugify(formData.name) || 'product'
@@ -218,15 +263,57 @@ export const DemoDataProvider = ({ children }) => {
   // --- Views Tracking ---
   const recordProductView = (productId) => {
     if (!productId) return
-    setViews((prev) => ({
-      ...prev,
-      [productId]: (prev[productId] || 0) + 1,
-    }))
+    setViews((prev) => {
+      const current = prev[productId] ?? DEFAULT_SEED_VIEWS[productId] ?? 0
+      return {
+        ...prev,
+        [productId]: current + 1,
+      }
+    })
   }
 
   const getProductViewCount = (productId) => {
     if (!productId) return 0
-    return views[productId] || 0
+    return views[productId] ?? DEFAULT_SEED_VIEWS[productId] ?? 0
+  }
+
+  // --- Upvotes Tracking & Leaderboard Calculation ---
+  const toggleProductUpvote = (productId, userEmail) => {
+    if (!productId || !userEmail) return { success: false, error: 'Sign in to upvote this prototype.' }
+    const normalized = userEmail.toLowerCase().trim()
+    let updatedUpvoted = false
+
+    setProductUpvotes((prev) => {
+      const currentList = prev[productId] || DEFAULT_SEED_UPVOTES[productId] || []
+      const hasUpvoted = currentList.includes(normalized)
+      updatedUpvoted = !hasUpvoted
+      const nextList = hasUpvoted
+        ? currentList.filter((e) => e !== normalized)
+        : [...currentList, normalized]
+      return {
+        ...prev,
+        [productId]: nextList,
+      }
+    })
+
+    return { success: true, upvoted: updatedUpvoted }
+  }
+
+  const getProductUpvotes = (productId) => {
+    if (!productId) return []
+    return productUpvotes[productId] || DEFAULT_SEED_UPVOTES[productId] || []
+  }
+
+  const getProductUpvoteCount = (productId) => {
+    if (!productId) return 0
+    return (productUpvotes[productId] || DEFAULT_SEED_UPVOTES[productId] || []).length
+  }
+
+  const hasUserUpvotedProduct = (productId, userEmail) => {
+    if (!productId || !userEmail) return false
+    const normalized = userEmail.toLowerCase().trim()
+    const list = productUpvotes[productId] || DEFAULT_SEED_UPVOTES[productId] || []
+    return list.includes(normalized)
   }
 
 
@@ -875,6 +962,10 @@ export const DemoDataProvider = ({ children }) => {
         views,
         recordProductView,
         getProductViewCount,
+        toggleProductUpvote,
+        getProductUpvotes,
+        getProductUpvoteCount,
+        hasUserUpvotedProduct,
         enrollments,
         enrollInProduct,
         isEnrolledInProduct,

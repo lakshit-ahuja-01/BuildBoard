@@ -1,6 +1,7 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useMemo } from 'react'
 import { MotionConfig, motion, AnimatePresence, useReducedMotion, useTransform, useMotionValue, useSpring } from 'motion/react'
-import { Link } from 'react-router'
+import { Link, useNavigate } from 'react-router'
+import { useAuth } from '../context/AuthContext.jsx'
 import { useDemoData } from '../context/DemoDataContext.jsx'
 import { useDocumentTitle } from '../hooks/useDocumentTitle.js'
 import Navbar from '../components/Navbar.jsx'
@@ -82,21 +83,47 @@ function RevealSection({ children, className = '', id }) {
   )
 }
 
-// ─── Product Spotlight (Controlled Carousel) ──────────────────────────────────
+// ─── Product Spotlight & Leaderboard ──────────────────────────────────────────
 
 function ProductSpotlight({ products = [] }) {
-  const { getProfile } = useDemoData()
+  const { getProfile, toggleProductUpvote, hasUserUpvotedProduct } = useDemoData()
+  const { user } = useAuth()
+  const navigate = useNavigate()
+
+  // Tab mode: 'spotlight' or 'leaderboard'
+  const [viewMode, setViewMode] = useState('spotlight')
   const [currentIndex, setCurrentIndex] = useState(0)
   const [isPaused, setIsPaused] = useState(false)
   const containerRef = useRef(null)
 
-  const count = products.length
-  const currentProduct = count > 0 ? products[currentIndex % count] : null
+  // Rank products dynamically based on both upvotes AND viewership:
+  // Formula: (upvotes * 10) + views
+  const rankedProducts = useMemo(() => {
+    return [...products].sort((a, b) => {
+      const scoreA = a.leaderboardScore ?? ((a.upvoteCount || 0) * 10 + (a.views || 0))
+      const scoreB = b.leaderboardScore ?? ((b.upvoteCount || 0) * 10 + (b.views || 0))
+      return scoreB - scoreA
+    })
+  }, [products])
+
+  const count = rankedProducts.length
+  const currentProduct = count > 0 ? rankedProducts[currentIndex % count] : null
   const currentMakerProfile = currentProduct?.creatorEmail ? getProfile(currentProduct.creatorEmail) : null
   const currentMakerName =
     currentMakerProfile?.displayName?.trim() ||
     currentProduct?.maker ||
     'Independent Builder'
+
+  const hasUpvotedCurrent = Boolean(user?.email && currentProduct?.id && hasUserUpvotedProduct(currentProduct.id, user.email))
+
+  const handleUpvote = (productId, e) => {
+    if (e) e.stopPropagation()
+    if (!user) {
+      navigate('/sign-in')
+      return
+    }
+    toggleProductUpvote(productId, user.email)
+  }
 
   // Pause on tab visibility change
   useEffect(() => {
@@ -120,172 +147,397 @@ function ProductSpotlight({ products = [] }) {
   }
 
   return (
-    <div
-      ref={containerRef}
-      onMouseEnter={() => setIsPaused(true)}
-      onMouseLeave={() => setIsPaused(false)}
-      onFocusCapture={() => setIsPaused(true)}
-      onBlurCapture={() => setIsPaused(false)}
-      className="rounded-3xl border border-[var(--border-main)] bg-[var(--bg-surface)] overflow-hidden shadow-warm-lg"
-      aria-roledescription="carousel"
-      aria-label="Product spotlight"
-    >
-      {/* Spotlight Top Bar Controls */}
-      <div className="flex flex-wrap items-center justify-between gap-4 border-b border-[var(--border-main)] bg-[var(--bg-surface-subtle)] px-6 py-4">
-        <div className="flex items-center gap-3">
-          <span className="rounded-full bg-[var(--bg-surface)] px-3 py-1 text-sm font-semibold text-[var(--text-subtle)] border border-[var(--border-main)]">
-            {currentIndex + 1} of {count}
-          </span>
+    <div className="flex flex-col gap-5">
+      {/* View Toggle Bar (Spotlight Showcase vs Full Leaderboard Table) */}
+      <div className="flex items-center justify-between flex-wrap gap-3">
+        <div className="flex items-center gap-1.5 rounded-2xl border border-[var(--border-main)] bg-[var(--bg-surface)] p-1 shadow-warm-xs">
           <button
             type="button"
-            onClick={() => {
-              if (count <= 1) return
-              let next = currentIndex
-              while (next === currentIndex) {
-                next = Math.floor(Math.random() * count)
-              }
-              setCurrentIndex(next)
-            }}
-            title="Random prototype jump"
-            className="inline-flex items-center gap-1.5 rounded-full border border-[var(--border-main)] bg-[var(--bg-surface)] px-3 py-1 text-xs font-semibold text-[var(--text-muted)] hover:border-[#d96b43] hover:text-[#d96b43] transition-all cursor-pointer active:scale-95 shadow-warm-xs"
-          >
-            <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-              <path d="M12 12h.01M16 8h.01M8 8h.01M8 16h.01M16 16h.01M11 21h2c2.8 0 4.2 0 5.27-.545a5 5 0 0 0 2.185-2.185C21 17.2 21 15.8 21 13v-2c0-2.8 0-4.2-.545-5.27a5 5 0 0 0-2.185-2.185C17.2 3 15.8 3 13 3h-2c-2.8 0-4.2 0-5.27.545A5 5 0 0 0 3.545 5.73C3 6.8 3 8.2 3 11v2c0 2.8 0 4.2.545 5.27a5 5 0 0 0 2.185 2.185C6.8 21 8.2 21 11 21Z" />
-            </svg>
-            <span>Surprise Me</span>
-          </button>
-        </div>
-
-        {/* Navigation Arrows */}
-        <div className="flex items-center gap-1.5">
-          <button
-            type="button"
-            onClick={() => setCurrentIndex((prev) => (prev - 1 + count) % count)}
-            className="flex h-8 w-8 items-center justify-center rounded-full border border-[var(--border-main)] bg-[var(--bg-surface)] text-sm text-[var(--text-main)] hover:bg-[var(--bg-surface-subtle)] transition cursor-pointer"
-            aria-label="Previous prototype"
-          >
-            ←
-          </button>
-          <button
-            type="button"
-            onClick={() => setCurrentIndex((prev) => (prev + 1) % count)}
-            className="flex h-8 w-8 items-center justify-center rounded-full border border-[var(--border-main)] bg-[var(--bg-surface)] text-sm text-[var(--text-main)] hover:bg-[var(--bg-surface-subtle)] transition cursor-pointer"
-            aria-label="Next prototype"
-          >
-            →
-          </button>
-        </div>
-      </div>
-
-      <div className="h-1 bg-[var(--bg-surface-subtle)]" aria-hidden="true">
-        <div
-          key={currentProduct.id}
-          onAnimationEnd={() => {
-            if (!isPaused && count > 1) {
-              setCurrentIndex((prev) => (prev + 1) % count)
-            }
-          }}
-          className="spotlight-progress h-full bg-[#d96b43]"
-          style={{ animationPlayState: isPaused ? 'paused' : 'running' }}
-        />
-      </div>
-
-      {/* Main Spotlight Showcase Grid with Coordinated Transition */}
-      <AnimatePresence mode="wait">
-        <motion.div
-          key={currentProduct.id}
-          initial={{ opacity: 0, y: 6 }}
-          animate={{ opacity: 1, y: 0 }}
-          exit={{ opacity: 0, y: -6 }}
-          transition={{ duration: 0.15 }}
-          className="grid gap-6 p-6 sm:p-8 lg:grid-cols-12 items-center"
-        >
-          {/* Left Info Column */}
-          <div className="lg:col-span-5 flex flex-col gap-3">
-            <div className="flex flex-wrap items-center gap-1.5">
-              <span className="rounded-full border border-[var(--border-main)] bg-[var(--bg-surface-subtle)] px-2.5 py-0.5 text-xs font-semibold text-[var(--text-muted)]">
-                {currentProduct.stage || 'Working prototype'}
-              </span>
-              {currentProduct.categories?.slice(0, 2).map((cat) => (
-                <span
-                  key={cat}
-                  className="rounded-full border border-[#d96b43]/20 bg-[#fbf3ee] dark:bg-[#e07a5f]/15 px-2.5 py-0.5 text-xs font-semibold text-[#b85028] dark:text-[#eb8b72]"
-                >
-                  {cat}
-                </span>
-              ))}
-            </div>
-
-            <h3 className="font-display text-xl sm:text-2xl lg:text-3xl font-bold tracking-tight text-[var(--text-main)]">
-              {currentProduct.name}
-            </h3>
-
-            <p className="text-sm sm:text-base leading-relaxed text-[var(--text-muted)]">
-              {currentProduct.tagline}
-            </p>
-
-            <div className="rounded-xl border border-[var(--border-main)] bg-[var(--bg-surface-subtle)] p-3.5 sm:p-4 text-xs sm:text-sm space-y-1.5">
-              <div className="text-[11px] uppercase font-bold tracking-wider text-[#d96b43] dark:text-[#eb8b72]">
-                Builder&apos;s Feedback Request:
-              </div>
-              <p className="text-xs sm:text-sm text-[var(--text-main)] italic leading-relaxed">
-                &ldquo;{currentProduct.feedbackRequest}&rdquo;
-              </p>
-            </div>
-
-            <div className="pt-1 flex flex-wrap items-center gap-3">
-              <ActionLink href={`/products/${currentProduct.id}`} variant="primary" size="md">
-                <span>Inspect &amp; Enroll</span>
-                <span aria-hidden="true">→</span>
-              </ActionLink>
-              <span className="text-xs text-[var(--text-subtle)]">
-                by {currentMakerName}
-              </span>
-            </div>
-          </div>
-
-          {/* Right Screenshot / Interface Column */}
-          <div className="lg:col-span-7">
-            <div className="overflow-hidden rounded-2xl border border-[var(--border-main)] bg-[var(--bg-surface-subtle)] shadow-warm-sm">
-              <motion.img
-                src={currentProduct.image}
-                alt={`${currentProduct.name} interface preview`}
-                className="w-full h-auto object-cover object-top max-h-[380px]"
-                whileHover={{ scale: 1.025 }}
-                transition={{ duration: 0.35, ease: [0.16, 1, 0.3, 1] }}
-                loading="lazy"
-              />
-            </div>
-          </div>
-        </motion.div>
-      </AnimatePresence>
-
-      {/* Quick Select Tabs at Bottom */}
-      <div className="flex border-t border-[var(--border-main)] overflow-x-auto bg-[var(--bg-surface-subtle)] px-6 py-3 gap-2" role="tablist" aria-label="Featured product previews">
-        {products.map((p, idx) => (
-          <button
-            key={p.id}
-            type="button"
-            role="tab"
-            aria-selected={idx === currentIndex}
-            onClick={() => setCurrentIndex(idx)}
-            className={`relative px-4 py-2 rounded-xl text-sm whitespace-nowrap transition cursor-pointer select-none ${
-              idx === currentIndex
-                ? 'text-[var(--text-main)] font-bold'
-                : 'text-[var(--text-muted)] hover:text-[var(--text-main)] font-medium'
+            onClick={() => setViewMode('spotlight')}
+            className={`flex items-center gap-2 rounded-xl px-4 py-2 text-xs sm:text-sm font-bold transition cursor-pointer ${
+              viewMode === 'spotlight'
+                ? 'bg-[#d96b43] text-white shadow-xs'
+                : 'text-[var(--text-muted)] hover:text-[var(--text-main)]'
             }`}
           >
-            {idx === currentIndex && (
-              <motion.div
-                layoutId="spotlight-active-pill"
-                className="absolute inset-0 rounded-xl bg-[var(--bg-surface)] border border-[var(--border-main)] shadow-xs"
-                transition={{ type: 'spring', damping: 25, stiffness: 300 }}
-              />
-            )}
-            <span className="relative z-10">{p.name}</span>
+            <span>Spotlight Carousel</span>
           </button>
-        ))}
+          <button
+            type="button"
+            onClick={() => setViewMode('leaderboard')}
+            className={`flex items-center gap-2 rounded-xl px-4 py-2 text-xs sm:text-sm font-bold transition cursor-pointer ${
+              viewMode === 'leaderboard'
+                ? 'bg-[#d96b43] text-white shadow-xs'
+                : 'text-[var(--text-muted)] hover:text-[var(--text-main)]'
+            }`}
+          >
+            <span>Full Leaderboard</span>
+            <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${viewMode === 'leaderboard' ? 'bg-white/20 text-white' : 'bg-[var(--bg-surface-subtle)] text-[var(--text-subtle)]'}`}>
+              {count}
+            </span>
+          </button>
+        </div>
       </div>
+
+      {viewMode === 'spotlight' ? (
+        <div
+          ref={containerRef}
+          onMouseEnter={() => setIsPaused(true)}
+          onMouseLeave={() => setIsPaused(false)}
+          onFocusCapture={() => setIsPaused(true)}
+          onBlurCapture={() => setIsPaused(false)}
+          className="rounded-3xl border border-[var(--border-main)] bg-[var(--bg-surface)] overflow-hidden shadow-warm-lg"
+          aria-roledescription="carousel"
+          aria-label="Product spotlight"
+        >
+          {/* Spotlight Top Bar Controls */}
+          <div className="flex flex-wrap items-center justify-between gap-4 border-b border-[var(--border-main)] bg-[var(--bg-surface-subtle)] px-6 py-4">
+            <div className="flex items-center gap-3">
+              <span className="rounded-full bg-[var(--bg-surface)] px-3 py-1 text-sm font-semibold text-[var(--text-subtle)] border border-[var(--border-main)]">
+                Rank #{currentIndex + 1} of {count}
+              </span>
+              <button
+                type="button"
+                onClick={() => {
+                  if (count <= 1) return
+                  let next = currentIndex
+                  while (next === currentIndex) {
+                    next = Math.floor(Math.random() * count)
+                  }
+                  setCurrentIndex(next)
+                }}
+                title="Random prototype jump"
+                className="inline-flex items-center gap-1.5 rounded-full border border-[var(--border-main)] bg-[var(--bg-surface)] px-3 py-1 text-xs font-semibold text-[var(--text-muted)] hover:border-[#d96b43] hover:text-[#d96b43] transition-all cursor-pointer active:scale-95 shadow-warm-xs"
+              >
+                <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <path d="M12 12h.01M16 8h.01M8 8h.01M8 16h.01M16 16h.01M11 21h2c2.8 0 4.2 0 5.27-.545a5 5 0 0 0 2.185-2.185C21 17.2 21 15.8 21 13v-2c0-2.8 0-4.2-.545-5.27a5 5 0 0 0-2.185-2.185C17.2 3 15.8 3 13 3h-2c-2.8 0-4.2 0-5.27.545A5 5 0 0 0 3.545 5.73C3 6.8 3 8.2 3 11v2c0 2.8 0 4.2.545 5.27a5 5 0 0 0 2.185 2.185C6.8 21 8.2 21 11 21Z" />
+                </svg>
+                <span>Surprise Me</span>
+              </button>
+            </div>
+
+            {/* Navigation Arrows */}
+            <div className="flex items-center gap-1.5">
+              <button
+                type="button"
+                onClick={() => setCurrentIndex((prev) => (prev - 1 + count) % count)}
+                className="flex h-8 w-8 items-center justify-center rounded-full border border-[var(--border-main)] bg-[var(--bg-surface)] text-sm text-[var(--text-main)] hover:bg-[var(--bg-surface-subtle)] transition cursor-pointer"
+                aria-label="Previous prototype"
+              >
+                ←
+              </button>
+              <button
+                type="button"
+                onClick={() => setCurrentIndex((prev) => (prev + 1) % count)}
+                className="flex h-8 w-8 items-center justify-center rounded-full border border-[var(--border-main)] bg-[var(--bg-surface)] text-sm text-[var(--text-main)] hover:bg-[var(--bg-surface-subtle)] transition cursor-pointer"
+                aria-label="Next prototype"
+              >
+                →
+              </button>
+            </div>
+          </div>
+
+          <div className="h-1 bg-[var(--bg-surface-subtle)]" aria-hidden="true">
+            <div
+              key={currentProduct.id}
+              onAnimationEnd={() => {
+                if (!isPaused && count > 1) {
+                  setCurrentIndex((prev) => (prev + 1) % count)
+                }
+              }}
+              className="spotlight-progress h-full bg-[#d96b43]"
+              style={{ animationPlayState: isPaused ? 'paused' : 'running' }}
+            />
+          </div>
+
+          {/* Main Spotlight Showcase Grid with Coordinated Transition */}
+          <AnimatePresence mode="wait">
+            <motion.div
+              key={currentProduct.id}
+              initial={{ opacity: 0, y: 6 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -6 }}
+              transition={{ duration: 0.15 }}
+              className="grid gap-6 p-6 sm:p-8 lg:grid-cols-12 items-center"
+            >
+              {/* Left Info Column */}
+              <div className="lg:col-span-5 flex flex-col gap-3">
+                <div className="flex flex-wrap items-center gap-2">
+                  {/* Leaderboard Rank Medal Badge */}
+                  <span className="inline-flex items-center gap-1.5 rounded-full border border-[var(--border-main)] bg-[var(--bg-surface)] px-2.5 py-0.5 text-xs font-semibold text-[var(--text-muted)]">
+                    Rank #{currentIndex + 1} on Leaderboard
+                  </span>
+
+                  <span className="rounded-full border border-[var(--border-main)] bg-[var(--bg-surface)] px-2.5 py-0.5 text-xs font-semibold text-[var(--text-muted)]">
+                    {currentProduct.stage || 'Working prototype'}
+                  </span>
+
+                  {currentProduct.categories?.slice(0, 2).map((cat) => (
+                    <span
+                      key={cat}
+                      className="rounded-full border border-[var(--border-main)] bg-[var(--bg-surface)] px-2.5 py-0.5 text-xs font-semibold text-[var(--text-muted)]"
+                    >
+                      {cat}
+                    </span>
+                  ))}
+                </div>
+
+                <h3 className="font-display text-xl sm:text-2xl lg:text-3xl font-bold tracking-tight text-[var(--text-main)]">
+                  {currentProduct.name}
+                </h3>
+
+                <p className="text-sm sm:text-base leading-relaxed text-[var(--text-muted)]">
+                  {currentProduct.tagline}
+                </p>
+
+                <div className="rounded-xl border border-[var(--border-main)] bg-[var(--bg-surface-subtle)] p-3.5 sm:p-4 text-xs sm:text-sm space-y-1.5">
+                  <div className="text-[11px] uppercase font-bold tracking-wider text-[#d96b43] dark:text-[#eb8b72]">
+                    Builder&apos;s Feedback Request:
+                  </div>
+                  <p className="text-xs sm:text-sm text-[var(--text-main)] italic leading-relaxed">
+                    &ldquo;{currentProduct.feedbackRequest}&rdquo;
+                  </p>
+                </div>
+
+                {/* Engagement Metrics & Upvote Action Button */}
+                <div className="pt-2 flex flex-col gap-2.5">
+                  <div className="flex items-center gap-2.5 flex-nowrap">
+                    <ActionLink href={`/products/${currentProduct.id}`} variant="primary" size="sm" className="shrink-0 whitespace-nowrap">
+                      <span>Inspect &amp; Enroll</span>
+                      <span aria-hidden="true">→</span>
+                    </ActionLink>
+
+                    {/* Interactive Upvote Button */}
+                    <button
+                      type="button"
+                      onClick={(e) => handleUpvote(currentProduct.id, e)}
+                      className={`shrink-0 whitespace-nowrap inline-flex items-center gap-2 rounded-full px-4 py-2 text-xs sm:text-sm font-bold transition-all cursor-pointer shadow-warm-xs active:scale-95 ${
+                        hasUpvotedCurrent
+                          ? 'bg-[#d96b43] text-white hover:bg-[#b85028] shadow-warm-sm'
+                          : 'border border-[var(--border-main)] bg-[var(--bg-surface)] text-[var(--text-main)] hover:border-[#d96b43] hover:text-[#d96b43]'
+                      }`}
+                      title={hasUpvotedCurrent ? 'Undo upvote' : 'Upvote this prototype'}
+                    >
+                      <svg className="h-4 w-4" fill={hasUpvotedCurrent ? 'currentColor' : 'none'} viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M5 15l7-7 7 7" />
+                      </svg>
+                      <span>{hasUpvotedCurrent ? 'Upvoted' : 'Upvote'}</span>
+                      <span className={`rounded-full px-2 py-0.5 text-xs font-extrabold ${hasUpvotedCurrent ? 'bg-white/20 text-white' : 'bg-[var(--bg-surface-subtle)] text-[var(--text-main)]'}`}>
+                        {currentProduct.upvoteCount || 0}
+                      </span>
+                    </button>
+                  </div>
+
+                  <div className="flex items-center gap-3 text-xs text-[var(--text-subtle)] font-medium">
+                    <span className="flex items-center gap-1">
+                      <svg className="h-3.5 w-3.5 opacity-70" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                      </svg>
+                      <span>{currentProduct.views || 0} views</span>
+                    </span>
+                    <span>·</span>
+                    <span>by {currentMakerName}</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Right Screenshot / Interface Column */}
+              <div className="lg:col-span-7">
+                <div className="relative overflow-hidden rounded-2xl border border-[var(--border-main)] bg-[var(--bg-surface-subtle)] shadow-warm-sm group">
+                  <motion.img
+                    src={currentProduct.image}
+                    alt={`${currentProduct.name} interface preview`}
+                    className="w-full h-auto object-cover object-top max-h-[380px]"
+                    whileHover={{ scale: 1.025 }}
+                    transition={{ duration: 0.35, ease: [0.16, 1, 0.3, 1] }}
+                    loading="lazy"
+                  />
+                  {/* Floating Rank Badge over Image */}
+                  <div className="absolute top-3 right-3 rounded-full border border-black/20 bg-black/60 backdrop-blur-md px-3 py-1 text-xs font-bold text-white shadow-xs flex items-center gap-1.5">
+                    <span>Rank #{currentIndex + 1}</span>
+                  </div>
+                </div>
+              </div>
+            </motion.div>
+          </AnimatePresence>
+
+          {/* Quick Select Tabs at Bottom - Ranked by Leaderboard Score */}
+          <div className="flex border-t border-[var(--border-main)] overflow-x-auto bg-[var(--bg-surface-subtle)] px-6 py-3 gap-2" role="tablist" aria-label="Featured product previews">
+            {rankedProducts.map((p, idx) => (
+              <button
+                key={p.id}
+                type="button"
+                role="tab"
+                aria-selected={idx === currentIndex}
+                onClick={() => setCurrentIndex(idx)}
+                className={`relative px-4 py-2 rounded-xl text-xs sm:text-sm whitespace-nowrap transition cursor-pointer select-none flex items-center gap-1.5 ${
+                  idx === currentIndex
+                    ? 'text-[var(--text-main)] font-bold'
+                    : 'text-[var(--text-muted)] hover:text-[var(--text-main)] font-medium'
+                }`}
+              >
+                {idx === currentIndex && (
+                  <motion.div
+                    layoutId="spotlight-active-pill"
+                    className="absolute inset-0 rounded-xl bg-[var(--bg-surface)] border border-[var(--border-main)] shadow-xs"
+                    transition={{ type: 'spring', damping: 25, stiffness: 300 }}
+                  />
+                )}
+                <span className="relative z-10 opacity-75 font-mono text-[11px]">
+                  #{idx + 1}
+                </span>
+                <span className="relative z-10">{p.name}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+      ) : (
+        /* Full Leaderboard Rankings Table */
+        <div className="overflow-hidden rounded-3xl border border-[var(--border-main)] bg-[var(--bg-surface)] shadow-warm-lg">
+          <div className="border-b border-[var(--border-main)] bg-[var(--bg-surface-subtle)] px-6 py-4 flex items-center justify-between">
+            <div>
+              <h3 className="font-display text-lg font-bold text-[var(--text-main)]">
+                Community Prototypes Leaderboard
+              </h3>
+              <p className="text-xs text-[var(--text-muted)] mt-0.5">
+                Calculated live: (Upvotes × 10) + Viewership. Cast your vote to propel prototypes up the ranks.
+              </p>
+            </div>
+          </div>
+
+          <div className="overflow-x-auto">
+            <table className="w-full text-left border-collapse text-sm">
+              <thead>
+                <tr className="border-b border-[var(--border-main)] bg-[var(--bg-surface)] text-[11px] font-bold uppercase tracking-wider text-[var(--text-subtle)]">
+                  <th scope="col" className="py-3 px-4 sm:px-6">Rank</th>
+                  <th scope="col" className="py-3 px-4">Prototype</th>
+                  <th scope="col" className="py-3 px-4 hidden sm:table-cell">Builder</th>
+                  <th scope="col" className="py-3 px-4 text-center">Views</th>
+                  <th scope="col" className="py-3 px-4 text-center">Upvotes</th>
+                  <th scope="col" className="py-3 px-4 text-right">Score</th>
+                  <th scope="col" className="py-3 px-4 text-right">Action</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-[var(--border-main)]">
+                {rankedProducts.map((p, idx) => {
+                  const pMakerProfile = p.creatorEmail ? getProfile(p.creatorEmail) : null
+                  const pMakerName = pMakerProfile?.displayName?.trim() || p.maker || 'Independent Builder'
+                  const isUpvoted = Boolean(user?.email && hasUserUpvotedProduct(p.id, user.email))
+
+                  return (
+                    <tr
+                      key={p.id}
+                      className="transition-colors hover:bg-[var(--bg-surface-subtle)]/70"
+                    >
+                      {/* Rank Column */}
+                      <td className="py-4 px-4 sm:px-6 whitespace-nowrap">
+                        <div className="flex items-center gap-2">
+                          <span className={`flex h-8 w-8 items-center justify-center rounded-xl text-xs font-bold ${
+                            idx === 0
+                              ? 'bg-amber-500/20 text-amber-900 dark:text-amber-200 border border-amber-500/35 font-extrabold text-sm'
+                              : idx === 1
+                              ? 'bg-slate-400/20 text-slate-800 dark:text-slate-200 border border-slate-400/35 font-bold text-sm'
+                              : idx === 2
+                              ? 'bg-amber-700/20 text-amber-900 dark:text-amber-300 border border-amber-700/35 font-bold text-sm'
+                              : 'bg-[var(--bg-surface-subtle)] text-[var(--text-muted)] font-mono border border-[var(--border-main)]'
+                          }`}>
+                            #{idx + 1}
+                          </span>
+                        </div>
+                      </td>
+
+                      {/* Prototype Column */}
+                      <td className="py-4 px-4">
+                        <div className="flex items-center gap-3">
+                          <img
+                            src={p.image}
+                            alt=""
+                            className="h-10 w-14 rounded-lg object-cover border border-[var(--border-main)] shrink-0 hidden sm:block"
+                          />
+                          <div className="min-w-0">
+                            <Link
+                              to={`/products/${p.id}`}
+                              className="font-bold text-[var(--text-main)] hover:text-[#d96b43] transition line-clamp-1 text-sm sm:text-base"
+                            >
+                              {p.name}
+                            </Link>
+                            <p className="text-xs text-[var(--text-muted)] line-clamp-1 max-w-xs">
+                              {p.tagline}
+                            </p>
+                          </div>
+                        </div>
+                      </td>
+
+                      {/* Maker Column */}
+                      <td className="py-4 px-4 hidden sm:table-cell whitespace-nowrap">
+                        <div className="flex items-center gap-2">
+                          <span className="flex h-6 w-6 items-center justify-center rounded-full bg-[#141b16] text-[10px] font-bold text-white dark:bg-[#f3f4f0] dark:text-[#0b100c]">
+                            {pMakerName.charAt(0).toUpperCase()}
+                          </span>
+                          <span className="text-xs font-medium text-[var(--text-muted)]">
+                            {pMakerName}
+                          </span>
+                        </div>
+                      </td>
+
+                      {/* Views Column */}
+                      <td className="py-4 px-4 text-center whitespace-nowrap text-xs font-medium text-[var(--text-subtle)]">
+                        <span className="inline-flex items-center gap-1.5">
+                          <svg className="h-3.5 w-3.5 opacity-70" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                          </svg>
+                          <span>{p.views || 0}</span>
+                        </span>
+                      </td>
+
+                      {/* Upvotes Column */}
+                      <td className="py-4 px-4 text-center whitespace-nowrap">
+                        <button
+                          type="button"
+                          onClick={(e) => handleUpvote(p.id, e)}
+                          className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-bold transition cursor-pointer ${
+                            isUpvoted
+                              ? 'bg-[#d96b43] text-white shadow-xs'
+                              : 'border border-[var(--border-main)] bg-[var(--bg-surface)] text-[var(--text-main)] hover:border-[#d96b43] hover:text-[#d96b43]'
+                          }`}
+                        >
+                          <svg className="h-3.5 w-3.5" fill={isUpvoted ? 'currentColor' : 'none'} viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M5 15l7-7 7 7" />
+                          </svg>
+                          <span>{p.upvoteCount || 0}</span>
+                        </button>
+                      </td>
+
+                      {/* Leaderboard Score */}
+                      <td className="py-4 px-4 text-right whitespace-nowrap">
+                        <span className="font-display font-black text-sm text-[#b85028] dark:text-[#eb8b72]">
+                          {p.leaderboardScore || 0}
+                        </span>
+                        <span className="text-[10px] font-semibold text-[var(--text-subtle)] ml-1">
+                          pts
+                        </span>
+                      </td>
+
+                      {/* Action */}
+                      <td className="py-4 px-4 text-right whitespace-nowrap">
+                        <Link
+                          to={`/products/${p.id}`}
+                          className="inline-flex items-center gap-1 text-xs font-bold text-[#d96b43] hover:underline"
+                        >
+                          <span>Inspect</span>
+                          <span>→</span>
+                        </Link>
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
